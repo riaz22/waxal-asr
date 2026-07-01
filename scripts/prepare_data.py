@@ -74,23 +74,29 @@ def _build_vocab(targets: list[str]) -> dict:
     return vocab
 
 
+def _load_hf_split(lang: str, split: str) -> datasets.Dataset:
+    """Download ONLY the labeled split's parquet shards, not the huge
+    `unlabeled` split. Requesting a named config would pull every shard
+    (incl. ~40 unlabeled files/lang) before slicing, blowing the session."""
+    pattern = f"data/ASR/{lang}/{lang}-{split}-*.parquet"
+    ds = datasets.load_dataset(
+        C.DATASET_ID, data_files={split: pattern}, split=split)
+    return ds.cast_column("audio", datasets.Audio(sampling_rate=C.SAMPLE_RATE))
+
+
 def prepare_language(lang: str, test_ids: set[str]) -> None:
-    cfg = f"{lang}_asr"
     print(f"\n=== {lang} ===")
     stats = CleanStats()
 
     for split in ("train", "validation"):
-        ds = datasets.load_dataset(C.DATASET_ID, name=cfg, split=split)
-        ds = ds.cast_column("audio", datasets.Audio(sampling_rate=C.SAMPLE_RATE))
-        ds = _clean_labeled(ds, stats)
+        ds = _clean_labeled(_load_hf_split(lang, split), stats)
         out = C.clean_ds_path(lang, split)
         out.parent.mkdir(parents=True, exist_ok=True)
         ds.save_to_disk(str(out))
         print(f"  {split}: kept {len(ds)} -> {out}")
 
     # Test: keep every Zindi id, no filtering (we must predict all of them).
-    test = datasets.load_dataset(C.DATASET_ID, name=cfg, split="test")
-    test = test.cast_column("audio", datasets.Audio(sampling_rate=C.SAMPLE_RATE))
+    test = _load_hf_split(lang, "test")
     before = len(test)
     test = test.filter(lambda b: [str(i) in test_ids for i in b["id"]],
                        batched=True)
