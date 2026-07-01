@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
+# trained models / large binaries produced on Kaggle
+*.bin
+*.safetensors
+*.arpa
+mms_*/
+whisper_turbo/
+lid_*.parquet
+preds_*.parquet

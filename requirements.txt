@@ -1,0 +1,15 @@
+# Kaggle GPU environment. Most are preinstalled; pin transformers new enough
+# for whisper-large-v3-turbo and the modern processor API.
+transformers>=4.44.0
+datasets>=2.20.0
+accelerate>=0.33.0
+peft>=0.12.0
+jiwer>=3.0.0
+librosa
+soundfile
+pyctcdecode>=0.5.0
+# kenlm (python) for LM scoring; build lmplz from source per build_lm.py header.
+https://github.com/kpu/kenlm/archive/master.zip
+pandas
+numpy
+torch
