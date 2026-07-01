@@ -14,6 +14,12 @@ Run once per language:
 
 from __future__ import annotations
 
+import os
+# Use ONE GPU: HF Trainer auto-wraps in nn.DataParallel on T4 x2, which gathers
+# grads on GPU 0 (OOM) and is slow. Set before torch initializes CUDA.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import argparse
 import inspect
 import json
@@ -82,10 +88,11 @@ def build_processor(lang: str, out_dir: Path) -> Wav2Vec2Processor:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--lang", required=True, choices=C.LANGS)
-    ap.add_argument("--epochs", type=float, default=8.0)
+    ap.add_argument("--epochs", type=float, default=4.0)
     ap.add_argument("--lr", type=float, default=1e-3)   # adapters like higher lr
-    ap.add_argument("--bs", type=int, default=8)
-    ap.add_argument("--grad_accum", type=int, default=4)
+    ap.add_argument("--bs", type=int, default=2)         # 1B model on 16GB
+    ap.add_argument("--grad_accum", type=int, default=16)  # eff. batch 32
+    ap.add_argument("--max_sec", type=float, default=20.0)  # drop longer clips
     args = ap.parse_args()
     C.require_prepared()
     lang, out = args.lang, C.mms_dir(args.lang)
@@ -99,6 +106,14 @@ def main() -> None:
     keep = ["audio", "target"]
     train = train.remove_columns([c for c in train.column_names if c not in keep])
     val = val.remove_columns([c for c in val.column_names if c not in keep])
+
+    # Drop long clips from TRAIN: they dominate memory (padding) and compute.
+    # One-time decode pass; writes only a small indices map.
+    max_samples = int(args.max_sec * C.SAMPLE_RATE)
+    before = len(train)
+    train = train.filter(
+        lambda ex: len(ex["audio"]["array"]) <= max_samples, num_proc=2)
+    print(f"length filter (<= {args.max_sec}s): {before} -> {len(train)} train")
 
     model = Wav2Vec2ForCTC.from_pretrained(
         C.MMS_MODEL, target_lang=lang, ignore_mismatched_sizes=True,
@@ -136,6 +151,7 @@ def main() -> None:
         warmup_ratio=0.1, lr_scheduler_type="linear",
         fp16=torch.cuda.is_available(), gradient_checkpointing=True,
         remove_unused_columns=False,   # collator needs raw audio + target
+        dataloader_num_workers=2,      # parallelize on-the-fly audio decode
         eval_strategy="steps", eval_steps=400, save_steps=400, logging_steps=50,
         save_total_limit=1, save_only_model=True, load_best_model_at_end=True,
         metric_for_best_model="wer", greater_is_better=False,

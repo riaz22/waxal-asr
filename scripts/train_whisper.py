@@ -17,6 +17,11 @@ Notes:
 
 from __future__ import annotations
 
+import os
+# Single GPU (avoid HF Trainer's nn.DataParallel OOM on T4 x2). Set before torch.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import argparse
 import inspect
 import sys
@@ -76,10 +81,10 @@ def load_split(split: str) -> datasets.Dataset:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--epochs", type=float, default=4.0)
+    ap.add_argument("--epochs", type=float, default=3.0)
     ap.add_argument("--lr", type=float, default=1e-5)
-    ap.add_argument("--bs", type=int, default=8)
-    ap.add_argument("--grad_accum", type=int, default=2)
+    ap.add_argument("--bs", type=int, default=4)         # turbo on 16GB
+    ap.add_argument("--grad_accum", type=int, default=8)   # eff. batch 32
     ap.add_argument("--lora", action="store_true")
     args = ap.parse_args()
     C.require_prepared()
@@ -129,6 +134,7 @@ def main() -> None:
         warmup_ratio=0.05, lr_scheduler_type="linear",
         fp16=torch.cuda.is_available(), gradient_checkpointing=not args.lora,
         remove_unused_columns=False,   # collator needs raw audio + target + lang
+        dataloader_num_workers=2,      # parallelize on-the-fly audio decode
         predict_with_generate=True, generation_max_length=400,
         eval_strategy="steps", eval_steps=500, save_steps=500, logging_steps=50,
         save_total_limit=1, save_only_model=True, load_best_model_at_end=True,
