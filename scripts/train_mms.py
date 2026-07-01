@@ -15,6 +15,7 @@ Run once per language:
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import sys
 from dataclasses import dataclass
@@ -140,10 +141,14 @@ def main() -> None:
         metric_for_best_model="wer", greater_is_better=False,
         weight_decay=0.005, report_to="none",
     )
+    # transformers v5 renamed Trainer's `tokenizer` arg to `processing_class`.
+    proc_key = ("processing_class"
+                if "processing_class" in inspect.signature(Trainer).parameters
+                else "tokenizer")
     trainer = Trainer(
         model=model, args=targs, train_dataset=train, eval_dataset=val,
-        data_collator=collator, tokenizer=proc.feature_extractor,
-        compute_metrics=compute_metrics)
+        data_collator=collator, compute_metrics=compute_metrics,
+        **{proc_key: proc.feature_extractor})
     trainer.train()
     # Persist the adapter weights explicitly (small, easy to reload for infer).
     model.save_pretrained(str(out))

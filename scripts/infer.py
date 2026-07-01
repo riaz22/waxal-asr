@@ -72,13 +72,17 @@ def infer_mms(ds, l_map, split):
         if not ids:
             continue
         mdir = C.mms_dir(lang)
-        proc = Wav2Vec2Processor.from_pretrained(str(mdir))
+        if not (mdir / "preprocessor_config.json").exists():
+            raise SystemExit(
+                f"{mdir} has no trained model. Run scripts/train_mms.py "
+                f"--lang {lang} first (STEP 3).")
+        proc = Wav2Vec2Processor.from_pretrained(str(mdir), local_files_only=True)
         proc.tokenizer.set_target_lang(lang)
         # Fine-tuned adapter + head are in the saved weights; target_lang wires
         # the right adapter path. (No separate load_adapter needed.)
         model = Wav2Vec2ForCTC.from_pretrained(
-            str(mdir), target_lang=lang,
-            ignore_mismatched_sizes=True).to(device).eval()
+            str(mdir), target_lang=lang, ignore_mismatched_sizes=True,
+            local_files_only=True).to(device).eval()
         decoder = _mms_decoder(proc, lang)
         idset = set(ids)
         for row in ds:
@@ -105,9 +109,13 @@ def infer_whisper(ds, l_map, split):
     from transformers import WhisperForConditionalGeneration, WhisperProcessor
     device = "cuda" if torch.cuda.is_available() else "cpu"
     wdir = C.whisper_dir()
-    proc = WhisperProcessor.from_pretrained(str(wdir))
+    if not (wdir / "preprocessor_config.json").exists():
+        raise SystemExit(
+            f"{wdir} has no trained model. Run scripts/train_whisper.py "
+            "first (STEP 4).")
+    proc = WhisperProcessor.from_pretrained(str(wdir), local_files_only=True)
     model = WhisperForConditionalGeneration.from_pretrained(
-        str(wdir)).to(device).eval()
+        str(wdir), local_files_only=True).to(device).eval()
     preds: dict[str, str] = {}
     for row in ds:
         rid = str(row["id"])

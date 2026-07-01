@@ -18,6 +18,7 @@ Notes:
 from __future__ import annotations
 
 import argparse
+import inspect
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -134,10 +135,13 @@ def main() -> None:
         metric_for_best_model="wer", greater_is_better=False,
         weight_decay=0.0, report_to="none",
     )
+    proc_key = ("processing_class"
+                if "processing_class" in inspect.signature(Seq2SeqTrainer).parameters
+                else "tokenizer")
     trainer = Seq2SeqTrainer(
         model=model, args=targs, train_dataset=train, eval_dataset=val,
-        data_collator=collator, tokenizer=processor.feature_extractor,
-        compute_metrics=compute_metrics)
+        data_collator=collator, compute_metrics=compute_metrics,
+        **{proc_key: processor.feature_extractor})
     trainer.train()
     model.save_pretrained(str(out))
     processor.save_pretrained(str(out))
