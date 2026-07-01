@@ -39,16 +39,26 @@ from src.metrics import wer as _wer, cer as _cer  # noqa: E402
 
 @dataclass
 class DataCollatorWhisper:
+    """Build log-mel features + per-sample language-tokened labels ON THE FLY.
+
+    Not pre-materialized to disk: Whisper log-mels are ~30GB for this data and
+    would overflow /kaggle/working. Only the current batch is realized.
+    """
     processor: WhisperProcessor
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
-        inp = [{"input_features": f["input_features"]} for f in features]
-        batch = self.processor.feature_extractor.pad(inp, return_tensors="pt")
-        lab = self.processor.tokenizer.pad(
-            [{"input_ids": f["labels"]} for f in features], return_tensors="pt")
+        fe, tok = self.processor.feature_extractor, self.processor.tokenizer
+        audios = [f["audio"]["array"] for f in features]
+        batch = fe(audios, sampling_rate=C.SAMPLE_RATE, return_tensors="pt")
+        label_ids = []
+        for f in features:
+            tok.set_prefix_tokens(language=C.WHISPER_LANG[f["lang"]],
+                                  task="transcribe")
+            label_ids.append(
+                {"input_ids": tok(score_normalize(f["target"])).input_ids[:448]})
+        lab = tok.pad(label_ids, return_tensors="pt")
         labels = lab["input_ids"].masked_fill(lab.attention_mask.ne(1), -100)
-        # Drop the decoder's forced BOS if the collator would duplicate it.
-        if (labels[:, 0] == self.processor.tokenizer.bos_token_id).all():
+        if (labels[:, 0] == tok.bos_token_id).all():
             labels = labels[:, 1:]
         batch["labels"] = labels
         return batch
@@ -76,24 +86,14 @@ def main() -> None:
 
     processor = WhisperProcessor.from_pretrained(
         C.WHISPER_MODEL, task="transcribe")
-    fe = processor.feature_extractor
     tok = processor.tokenizer
 
-    def prep(batch):
-        au = batch["audio"]
-        batch["input_features"] = fe(
-            au["array"], sampling_rate=au["sampling_rate"]).input_features[0]
-        tok.set_prefix_tokens(language=C.WHISPER_LANG[batch["lang"]],
-                              task="transcribe")
-        # Whisper decoder positions cap at 448; truncate the rare long label.
-        batch["labels"] = tok(score_normalize(batch["target"])).input_ids[:448]
-        return batch
-
-    train = load_split("train").map(prep, remove_columns=None, num_proc=2)
-    val = load_split("validation").map(prep, remove_columns=None, num_proc=2)
-    cols = ["input_features", "labels"]
-    train = train.remove_columns([c for c in train.column_names if c not in cols])
-    val = val.remove_columns([c for c in val.column_names if c not in cols])
+    # Keep only audio + target + lang; features built per-batch in the collator.
+    keep = ["audio", "target", "lang"]
+    train = load_split("train")
+    val = load_split("validation")
+    train = train.remove_columns([c for c in train.column_names if c not in keep])
+    val = val.remove_columns([c for c in val.column_names if c not in keep])
 
     model = WhisperForConditionalGeneration.from_pretrained(C.WHISPER_MODEL)
     model.config.forced_decoder_ids = None
@@ -127,9 +127,10 @@ def main() -> None:
         num_train_epochs=args.epochs, learning_rate=args.lr,
         warmup_ratio=0.05, lr_scheduler_type="linear",
         fp16=torch.cuda.is_available(), gradient_checkpointing=not args.lora,
+        remove_unused_columns=False,   # collator needs raw audio + target + lang
         predict_with_generate=True, generation_max_length=400,
         eval_strategy="steps", eval_steps=500, save_steps=500, logging_steps=50,
-        save_total_limit=2, load_best_model_at_end=True,
+        save_total_limit=1, save_only_model=True, load_best_model_at_end=True,
         metric_for_best_model="wer", greater_is_better=False,
         weight_decay=0.0, report_to="none",
     )

@@ -37,15 +37,21 @@ from src.metrics import wer as _wer, cer as _cer  # noqa: E402
 
 @dataclass
 class DataCollatorCTC:
+    """Extract features from raw audio + tokenize targets ON THE FLY, per batch.
+
+    Feature extraction is NOT pre-materialized to disk (that overflowed Kaggle's
+    ~20GB /kaggle/working). The dataset keeps only compressed audio + text; the
+    heavy float arrays exist just for the current batch.
+    """
     processor: Wav2Vec2Processor
 
     def __call__(self, features: list[dict[str, Any]]) -> dict[str, torch.Tensor]:
-        inputs = [{"input_values": f["input_values"]} for f in features]
-        labels = [{"input_ids": f["labels"]} for f in features]
-        batch = self.processor.feature_extractor.pad(
-            inputs, padding=True, return_tensors="pt")
-        lab = self.processor.tokenizer.pad(
-            labels, padding=True, return_tensors="pt")
+        audios = [f["audio"]["array"] for f in features]
+        texts = [score_normalize(f["target"]) for f in features]
+        batch = self.processor.feature_extractor(
+            audios, sampling_rate=C.SAMPLE_RATE, padding=True,
+            return_tensors="pt")
+        lab = self.processor.tokenizer(texts, padding=True, return_tensors="pt")
         batch["labels"] = lab["input_ids"].masked_fill(
             lab.attention_mask.ne(1), -100)
         return batch
@@ -85,19 +91,13 @@ def main() -> None:
 
     proc = build_processor(lang, out)
 
+    # Keep only audio + target; features are built per-batch in the collator
+    # (no disk materialization -> no /kaggle/working overflow).
     train = datasets.load_from_disk(str(C.clean_ds_path(lang, "train")))
     val = datasets.load_from_disk(str(C.clean_ds_path(lang, "validation")))
-
-    def prep(batch):
-        au = batch["audio"]
-        batch["input_values"] = proc.feature_extractor(
-            au["array"], sampling_rate=au["sampling_rate"]).input_values[0]
-        batch["input_length"] = len(batch["input_values"])
-        batch["labels"] = proc.tokenizer(score_normalize(batch["target"])).input_ids
-        return batch
-
-    train = train.map(prep, remove_columns=train.column_names, num_proc=2)
-    val = val.map(prep, remove_columns=val.column_names, num_proc=2)
+    keep = ["audio", "target"]
+    train = train.remove_columns([c for c in train.column_names if c not in keep])
+    val = val.remove_columns([c for c in val.column_names if c not in keep])
 
     model = Wav2Vec2ForCTC.from_pretrained(
         C.MMS_MODEL, target_lang=lang, ignore_mismatched_sizes=True,
@@ -134,9 +134,9 @@ def main() -> None:
         num_train_epochs=args.epochs, learning_rate=args.lr,
         warmup_ratio=0.1, lr_scheduler_type="linear",
         fp16=torch.cuda.is_available(), gradient_checkpointing=True,
-        group_by_length=True, length_column_name="input_length",
+        remove_unused_columns=False,   # collator needs raw audio + target
         eval_strategy="steps", eval_steps=400, save_steps=400, logging_steps=50,
-        save_total_limit=2, load_best_model_at_end=True,
+        save_total_limit=1, save_only_model=True, load_best_model_at_end=True,
         metric_for_best_model="wer", greater_is_better=False,
         weight_decay=0.005, report_to="none",
     )
