@@ -71,6 +71,7 @@ def main() -> None:
     ap.add_argument("--grad_accum", type=int, default=2)
     ap.add_argument("--lora", action="store_true")
     args = ap.parse_args()
+    C.require_prepared()
     out = C.whisper_dir()
 
     processor = WhisperProcessor.from_pretrained(

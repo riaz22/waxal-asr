@@ -111,6 +111,13 @@ def prepare_language(lang: str, test_ids: set[str]) -> None:
 
 
 def main() -> None:
+    if str(C.DATA_DIR).startswith("/kaggle/input"):
+        raise SystemExit(
+            f"DATA_DIR={C.DATA_DIR} is a read-only attached dataset -- the "
+            "cleaned data already exists, so skip this step and go straight to "
+            "build_lm / training. (Detach the 'waxal-clean' dataset if you want "
+            "to regenerate it into /kaggle/working.)")
+    C.DATA_DIR.mkdir(parents=True, exist_ok=True)
     test_ids = _zindi_test_ids()
     print(f"Zindi test ids: {len(test_ids)}")
     missing = dict.fromkeys(C.LANGS, 0)

@@ -131,6 +131,7 @@ def main() -> None:
     ap.add_argument("--model", required=True, choices=["mms", "whisper"])
     ap.add_argument("--split", default="test")
     args = ap.parse_args()
+    C.require_prepared()
 
     ds = load_split(args.split)
     l_map = lang_map(ds, args.split)

@@ -45,6 +45,7 @@ def main() -> None:
     ap.add_argument("--split", default="test")
     ap.add_argument("--batch", type=int, default=8)
     args = ap.parse_args()
+    C.require_prepared()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     fe = AutoFeatureExtractor.from_pretrained(C.LID_MODEL)

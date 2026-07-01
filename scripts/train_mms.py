@@ -80,6 +80,7 @@ def main() -> None:
     ap.add_argument("--bs", type=int, default=8)
     ap.add_argument("--grad_accum", type=int, default=4)
     args = ap.parse_args()
+    C.require_prepared()
     lang, out = args.lang, C.mms_dir(args.lang)
 
     proc = build_processor(lang, out)
